@@ -14,9 +14,9 @@ import (
 )
 
 var (
-	name   = flag.String("name", "echo-01", "")
-	addr   = flag.String("address", ":8181", "echo server address")
-	consul = flag.String("consul-url", "http://localhost:8500", "consul server url")
+	name      = flag.String("name", "echo-01", "")
+	addr      = flag.String("address", ":8181", "echo server address")
+	consulUrl = flag.String("consul-url", "", "consul server url")
 )
 
 func main() {
@@ -24,34 +24,16 @@ func main() {
 
 	fmt.Printf(`%s listen and serve at %s`, *name, *addr)
 
-	// consul client
-	config := api.DefaultConfig()
-	client, err := api.NewClient(config)
-	FatalIfError(err)
-
-	//
 	host, port := HostPort(*addr)
 
-	// register
-	// https://www.consul.io/api/catalog.html#register-entity
-	reg := &api.CatalogRegistration{
-		Node:           *name,
-		SkipNodeUpdate: true,
-		Service: &api.AgentService{
-			ID:      *name,
-			Service: *name,
-			Address: host,
-			Port:    port,
-		},
-	}
-	_, err = client.Catalog().Register(reg, nil)
-	FatalIfError(err)
+	registerToConsulIfAvailable(*consulUrl, *name, host, port)
 
 	// server
 	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		w.Write(formattedRequest(r))
 	})
-	err = http.ListenAndServe(*addr, nil)
+
+	err := http.ListenAndServe(*addr, nil)
 	FatalIfError(err)
 }
 
@@ -64,7 +46,7 @@ func formattedRequest(r *http.Request) []byte {
 	for name, headers := range r.Header {
 		name = strings.ToLower(name)
 		for _, h := range headers {
-			buffer.WriteString(fmt.Sprintf("%v: %v", name, h))
+			buffer.WriteString(fmt.Sprintf("%v: %v\n", name, h))
 		}
 	}
 
@@ -74,6 +56,36 @@ func formattedRequest(r *http.Request) []byte {
 	buffer.Write(body)
 
 	return buffer.Bytes()
+}
+
+func registerToConsulIfAvailable(consulUrl, name, host string, port int) bool {
+	if consulUrl != "" {
+		// consul client
+		config := api.DefaultConfig()
+		config.Address = consulUrl
+		client, err := api.NewClient(config)
+		FatalIfError(err)
+
+		// register
+		// https://www.consul.io/api/catalog.html#register-entity
+		reg := &api.CatalogRegistration{
+			Node:           name,
+			SkipNodeUpdate: true,
+			Service: &api.AgentService{
+				ID:      name,
+				Service: name,
+				Address: host,
+				Port:    port,
+			},
+		}
+		_, err = client.Catalog().Register(reg, nil)
+		if err != nil {
+			return true
+		}
+	}
+
+	return false
+
 }
 
 func HostPort(address string) (host string, port int) {
@@ -92,5 +104,4 @@ func FatalIfError(err error) {
 	if err != nil {
 		log.Fatal(err.Error())
 	}
-
 }
